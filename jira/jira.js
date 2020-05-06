@@ -4,14 +4,13 @@ module.exports = function(RED) {
     function JiraIssueUpdateNode(config) {
         RED.nodes.createNode(this, config);
         var node = this;
-        var jql = config.jql;
         var server = RED.nodes.getNode(config.server);
 
 
         this.on('input', function(msg) {
             var issueKey = msg.topic;
             var updateParameters = msg.payload;
-            this.log("Updating issue '" + issueKey + "'");
+            this.trace(`Updating issue ${issueKey}`);
 
             if (!issueKey || !updateParameters) {
                 node.status({
@@ -20,8 +19,22 @@ module.exports = function(RED) {
                     text: "Invalid message received"
                 });
             }
+
             var callback = function(errors, response, body) {
-                if (response.statusCode === 204) {
+                if (errors) {
+                    node.status({
+                        fill: "red",
+                        shape: "dot",
+                        text: "Update failed"
+                    });
+
+                    msg.errors = errors;
+
+                    node.error(
+                        "Error updating issue.",
+                        msg
+                    );
+                } else if (response.statusCode === 204) {
                     node.status({});
                     node.send(msg);
                 } else {
@@ -30,15 +43,24 @@ module.exports = function(RED) {
                         shape: "dot",
                         text: "Update failed"
                     });
-                    node.error("Error updating issue (" + response.statusCode + "): " + JSON.stringify(errors) + " " + JSON.stringify(body));
+
+                    msg.statusCode = response.statusCode;
+                    msg.payload = body;
+
+                    node.error(
+                        "Error updating issue.",
+                        msg
+                    );
                 }
 
             };
+    
             node.status({
                 fill: "blue",
                 shape: "dot",
                 text: "Requesting..."
             });
+
             server.edit(issueKey, updateParameters, callback);
         });
     }
@@ -46,68 +68,82 @@ module.exports = function(RED) {
     function JiraSearchNode(config) {
         RED.nodes.createNode(this, config);
         var node = this;
-        //var jql = config.jql;
         var server = RED.nodes.getNode(config.server);
-        var maxIssues = config.pagesize || 1000;
+        var maxIssues = 100;
+        var defaultFields = [
+            "key",
+            "title",
+            "summary",
+            "labels",
+            "status",
+            "issuetype",
+            "description",
+            "reporter",
+            "created",
+            "environment",
+            "priority",
+            "comment",
+            "project"
+        ];
 
 
         this.on('input', function(msg) {
-            var jql = config.jql || msg.jql;
-            this.log("Performing search '" + jql + "'");
-            node.perform(jql, function(issue, index, array) {
-                msg.topic = issue.key;
-                msg.result = issue;
-                node.send(msg);
+            var jql = msg.jql || config.jql;
+            var fields = msg.fields || defaultFields;
+
+            this.trace(`Performing search '${jql}'`);
+
+            node.perform(jql, fields, function(result, error) {
+                if (error) {
+                    node.status({
+                        fill: "red",
+                        shape: "dot",
+                        text: "Error performing request"
+                    });
+    
+                    msg.payload = result;
+                    node.error(
+                        error,
+                        msg
+                    );
+                } else {
+                    msg.topic = issue.key;
+                    msg.result = issue;
+                    node.send(msg);
+                }
             });
         });
 
-        this.perform = function(jql, callback, startIndex = 0) {
+        this.perform = function(jql, fields, callback, startIndex = 0, results = []) {
 
             var toIndex = startIndex + maxIssues;
             var options = {
                 "startAt": startIndex,
                 "maxResults": maxIssues,
-                "fields": ["key", "title", "summary", "labels", "status", "issuetype", "description", "reporter", "created", "environment","priority","comment", "project"]
+                "fields": fields
             };
+
             var rqcallback = function(errors, response, body) {
                 if (errors) {
-                    node.status({
-                        fill: "red",
-                        shape: "dot",
-                        text: "Error performing request"
-                    });
-                    node.error("Error processing search. " + JSON.stringify(errors));
+                    callback(errors, "Error while calling search API.");
                 } else if (response.statusCode === 200) {
                     node.status({});
-                    var issues = body;
-                    if (issues) {
 
-                        node.log("Processing issues " + startIndex + " to " + toIndex + " of total " + issues.total);
-                        //console.log(issues);
-                        issues.issues.forEach(callback);
+                    var issues = body;
+
+                    if (issues) {
+                        results = results.concat(issues.issues);
                     }
 
                     if (issues.total > toIndex) {
-                        node.log("Recursing");
-                        node.perform(jql, callback, startIndex + maxIssues);
+                        node.perform(jql, fields, callback, startIndex + maxIssues, results);
+                    } else {
+                        callback(results);
                     }
 
-                } else if (response.statusCode === 400) {
-                    node.status({
-                        fill: "red",
-                        shape: "dot",
-                        text: "Invalid JQL"
-                    });
                 } else {
-                    node.status({
-                        fill: "red",
-                        shape: "dot",
-                        text: "Error performing request"
-                    });
-                    node.error("Error processing search. status=" + response.statusCode + " errors=" + JSON.stringify(response));
+                    callback(body, "Error while calling search API.");
                 }
-
-
             };
 
             node.status({
@@ -115,13 +151,14 @@ module.exports = function(RED) {
                 shape: "dot",
                 text: "Requesting..."
             });
+
             server.search(jql, options, rqcallback);
         }
     }
 
     function JiraServerNode(config) {
         RED.nodes.createNode(this, config);
-        this.log(config);
+        this.trace(config);
         var node = this;
         var url = config.url;
         var user = this.credentials.username;
@@ -134,7 +171,7 @@ module.exports = function(RED) {
                 'user': user,
                 'pass': password
             };
-            this.log("DoRequest " + options);
+            this.trace("DoRequest " + options);
             request(options, callback);
         }
 
@@ -215,25 +252,20 @@ module.exports = function(RED) {
                     expand: options.expand || ['schema', 'names']
                 }
             };
-            this.log("Calling dorequest");
+            this.trace("Calling dorequest");
             this.doRequest(options, callback);
         }
-
-
     }
 
     function JiraIssueGetNode(config) {
         RED.nodes.createNode(this, config);
         var node = this;
-        var jql = config.jql;
-        var property_key = config.key;
-        var property_body = config.body;
         var server = RED.nodes.getNode(config.server);
 
 
         this.on('input', function(msg) {
             var issueKey = msg.topic;
-            this.log("Retrieving issue '" + issueKey + "'");
+            this.trace(`Retrieving issue ${issueKey}`);
 
             if (!issueKey) {
                 node.status({
@@ -242,6 +274,7 @@ module.exports = function(RED) {
                     text: "Invalid message received"
                 });
             }
+
             var callback = function(errors, response, body) {
                 if (errors) {
                     node.status({
@@ -249,12 +282,16 @@ module.exports = function(RED) {
                         shape: "dot",
                         text: "Error performing request"
                     });
-                    node.error("Error processing search. " + JSON.stringify(errors));
+
+                    msg.errors = errors;
+
+                    node.error("Error processing search.", msg);
                 } else if (response.statusCode === 200) {
                     node.status({});
 
-                    msg[property_key] = response.body.key;
-                    msg[property_body] = response.body
+                    msg.topic = response.body.key;
+                    msg.payload = response.body
+
                     node.send(msg);
                 } else {
                     node.status({
@@ -262,7 +299,11 @@ module.exports = function(RED) {
                         shape: "dot",
                         text: "Get failed"
                     });
-                    node.error("Error getting issue (" + response.statusCode + "): " + JSON.stringify(response));
+
+                    msg.statusCode = response.statusCode;
+                    msg.payload = body;
+
+                    node.error("Error getting issue.", msg);
                 }
 
             };
@@ -282,7 +323,7 @@ module.exports = function(RED) {
         var server = RED.nodes.getNode(config.server);
 
         this.on('input', function(msg) {
-            var issueDefinition = msg;
+
             var callback = function(errors, response, body) {
                 if (errors) {
                     node.status({
@@ -290,7 +331,9 @@ module.exports = function(RED) {
                         shape: "dot",
                         text: "Error performing request"
                     });
-                    node.error("Error creating issue. " + JSON.stringify(errors));
+                    msg.errors = errors;
+
+                    node.error("Error creating issue.", msg);
                 } else if (response.statusCode === 201) {
                     node.status({});
                     msg.topic = response.body.key;
@@ -301,14 +344,16 @@ module.exports = function(RED) {
                         shape: "dot",
                         text: "Create failed"
                     });
-                    node.error("Error creating issue (" + response.statusCode + "): " + JSON.stringify(response));
+
+                    msg.statusCode = response.statusCode;
+                    msg.payload = body;
+
+                    node.error("Error creating issue.", response);
                 }
 
             };
             server.create(msg.payload, callback);
         });
-
-
     }
 
     function JiraIssueCommentAddNode(config) {
@@ -317,7 +362,6 @@ module.exports = function(RED) {
         var server = RED.nodes.getNode(config.server);
 
         this.on('input', function(msg) {
-            var commentDefinition = msg.payload;
             var callback = function(errors, response, body) {
                 if (errors) {
                     node.status({
@@ -325,7 +369,10 @@ module.exports = function(RED) {
                         shape: "dot",
                         text: "Error performing request"
                     });
-                    node.error("Error creating comment. " + JSON.stringify(errors));
+
+                    msg.errors = errors;
+
+                    node.error("Error creating comment.", msg);
                 } else if (response.statusCode === 201) {
                     node.status({});
                     msg.payload=body;
@@ -334,9 +381,13 @@ module.exports = function(RED) {
                     node.status({
                         fill: "red",
                         shape: "dot",
-                        text: "Create failed"
+                        text: "Create comment failed"
                     });
-                    node.error("Error creating issue (" + response.statusCode + "): " + JSON.stringify(response));
+
+                    msg.statusCode = response.statusCode;
+                    msg.payload = body;
+
+                    node.error("Error creating comment.", msg);
                 }
 
             };
@@ -350,7 +401,6 @@ module.exports = function(RED) {
         var server = RED.nodes.getNode(config.server);
 
         this.on('input', function(msg) {
-            var commentDefinition = msg.payload;
             var callback = function(errors, response, body) {
                 if (errors) {
                     node.status({
@@ -358,7 +408,10 @@ module.exports = function(RED) {
                         shape: "dot",
                         text: "Error performing request"
                     });
-                    node.error("Error editing comment. " + JSON.stringify(errors));
+
+                    msg.errors = errors;
+
+                    node.error("Error editing comment.", msg);
                 } else if (response.statusCode === 201) {
                     node.status({});
                     msg.payload=body;
@@ -367,9 +420,13 @@ module.exports = function(RED) {
                     node.status({
                         fill: "red",
                         shape: "dot",
-                        text: "Create failed"
+                        text: "Edit comment failed"
                     });
-                    node.error("Error creating issue (" + response.statusCode + "): " + JSON.stringify(response));
+
+                    msg.statusCode = response.statusCode;
+                    msg.payload = body;
+
+                    node.error("Error editing comment.", msg);
                 }
 
             };
@@ -388,6 +445,7 @@ module.exports = function(RED) {
             }
         }
     });
+
     RED.nodes.registerType("jira-search", JiraSearchNode);
     RED.nodes.registerType("jira-issue-update", JiraIssueUpdateNode);
     RED.nodes.registerType("jira-issue-get", JiraIssueGetNode);

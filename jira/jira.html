@@ -78,16 +78,6 @@
       },
       jql: {
         value: ""
-      },
-      pagesize: {
-        value: 1000,
-        validate: RED.validators.number()
-      },
-      body: {
-        value: "payload"
-      },
-      key: {
-        value: "topic"
       }
     },
     inputs: 1,
@@ -112,10 +102,6 @@
     <label for="node-input-jql"><i class="icon-function"></i> JQL</label>
     <input type="text" id="node-input-jql" placeholder="project = TEST and labels in ('findme')">
   </div>
-  <div class="form-row">
-    <label for="node-input-pagesize"><i class="icon-tag"></i> Pagesize</label>
-    <input type="text" id="node-input-pagesize" value="1000">
-  </div>
 </script>
 
 <script type="text/x-red" data-help-name="jira-search">
@@ -131,24 +117,21 @@
     <li>
       <b>JQL</b> The <a href="https://confluence.atlassian.com/jirasoftwarecloud/advanced-searching-764478330.html#Advancedsearching-ConstructingJQLqueries" target="_blank">JQL query</a> to execute.
     </li>
-    <li>
-      <b>Pagesize</b> How many issues to fetch in a single call to the JIRA API.
-    </li>
   </ul>
   <b>Input</b>
   <ul>
     <li>
       Any message will trigger the search.
-      <code>msg.jql</code> for jql
+      Use <code>msg.jql</code> to customise the JQL query
+    </li>
+    <li>
+      Use <code>msg.fields</code> to customise the fields returned by Jira
     </li>
   </ul>
   <b>Output</b>
   <ul>
     <li>
-      <code>msg.payload</code> contains the issue.
-    </li>
-    <li>
-      <code>msg.topic</code> contains the issue key.
+      <code>msg.payload</code> contains the result.
     </li>
   </ul>
 </script>
@@ -209,12 +192,6 @@
       server: {
         value: "",
         type: "jira-server"
-      },
-      body: {
-        value: "payload"
-      },
-      key: {
-        value: "topic"
       }
     },
     inputs: 1,
@@ -234,21 +211,13 @@
     <label for="node-input-server"><i class="icon-db"></i> Server</label>
     <input type="text" id="node-input-server" placeholder="Server">
   </div>
-  <div class="form-row">
-    <label for="node-input-key"><i class="icon-db"></i> Attr. Issue Key</label>
-    <input type="text" id="node-input-key" placeholder="Property">
-  </div>
-  <div class="form-row">
-    <label for="node-input-body"><i class="icon-db"></i> Attr. Issue</label>
-    <input type="text" id="node-input-body" placeholder="Property">
-  </div>
 </script>
 
 <script type="text/x-red" data-help-name="jira-issue-get">
   <p>A node to get issues via JIRAs REST API.</p>
   <p>
     <ul>
-      <li><code>msg.key</code> must contain the ticket ID you want to get</li>
+      <li><code>msg.topic</code> contains the id of the ticket to retrieve.</li>
     </ul>
   </p>
 </script>
